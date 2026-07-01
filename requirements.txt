@@ -1,0 +1,5 @@
+streamlit
+xarray
+netcdf4
+matplotlib
+gdown

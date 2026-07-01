@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed Jul 01 17:15:00 2026
+Created on Wed Jul 01 17:30:00 2026
 
 @author: BMKG Staklim Lampung
 """
@@ -10,7 +10,7 @@ import gdown
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
-import regionmask  # Library masking terbaik untuk NetCDF/CMIP6
+import regionmask  # Menggunakan pemotongan mutlak 3D boolean mask
 from matplotlib.colors import ListedColormap, BoundaryNorm
 import streamlit as st
 import xarray as xr
@@ -24,7 +24,7 @@ st.set_page_config(
 
 st.title("⛈️ Dashboard Proyeksi Indeks Curah Hujan Ekstrem - Provinsi Lampung")
 st.markdown(
-    "Aplikasi interaktif analisis klimatologi bulanan dan musiman (SSP370 & SSP585) dengan Masking Presisi Berbasis Regionmask."
+    "Aplikasi interaktif analisis klimatologi bulanan dan musiman (SSP370 & SSP585) dengan Masking 3D Mutlak Berbasis Regionmask."
 )
 st.write("---")
 
@@ -151,26 +151,29 @@ else:
     ds_area = ds.sel(lat=lat_slice_fixed, lon=geo_box["lon_slice"], time=slice(f"{tahun_mulai}-01-01", f"{tahun_selesai}-12-31"))
 
     # =========================================================================
-    # LOGIKA INTI REGIONMASK (SANGAT PRESISI & RINGAN)
+    # PERBAIKAN LOGIKA: KUNCI MASKING 3D BOOLEAN (PUTIH TOTAL DI LUAR SHP)
     # =========================================================================
     if gdf_lampung is not None and wilayah_pilihan == "Seluruh Provinsi Lampung":
         try:
-            # 1. Membuat objek mask dari geometri file GeoJSON Anda
-            lampung_mask = regionmask.from_geopandas(gdf_lampung)
+            # 1. Bangun objek regionmask dari geopandas dataframe
+            lampung_rm = regionmask.from_geopandas(gdf_lampung)
             
-            # 2. Membuat matriks 2D boolean mask yang pas dengan koordinat grid netCDF
-            # lon_name dan lat_name dikunci eksplisit agar tidak salah tebak
-            mask = lampung_mask.mask(ds_area.lon, ds_area.lat, lon_name="lon", lat_name="lat")
+            # 2. Bangun mask_3D (Menghasilkan array True/False yang sangat kaku per grid)
+            # abbrev digunakan untuk memastikan seluruh baris poligon digabung jadi satu kesatuan
+            mask_3d = lampung_rm.mask_3D(ds_area.lon, ds_area.lat, lon_name="lon", lat_name="lat")
             
-            # 3. Menghapus data di luar daratan Lampung (diubah jadi NaN / Kosong)
-            ds_area = ds_area.where(~np.isnan(mask))
+            # 3. Satukan semua baris region (jika ada lebih dari satu poligon/pulau di GeoJSON)
+            mask_final = mask_3d.any(dim="region")
+            
+            # 4. Potong data: Sumbu koordinat luar yang bernilai False otomatis diubah ke NaN (Bersih)
+            ds_area = ds_area.where(mask_final)
         except Exception as e:
-            print(f"[LOG REGIONMASK ERROR] {e}")
+            print(f"[LOG MASK_3D ERROR] {e}")
 
     tab_bulanan, tab_musiman = st.tabs(["📅 Analisis 12 Bulan", "🍂 Analisis Musiman (Seasonal)"])
 
     # =========================================================================
-    # TAB 1: VISUALISASI 12 BULAN (REGIONMASK + BOUNDARYNORM)
+    # TAB 1: VISUALISASI 12 BULAN
     # =========================================================================
     with tab_bulanan:
         st.subheader(f"📊 Klimatologi Rata-Rata Bulanan Periode {tahun_mulai} - {tahun_selesai}")
@@ -215,7 +218,7 @@ else:
         st.pyplot(fig)
 
     # =========================================================================
-    # TAB 2: VISUALISASI MUSIMAN (REGIONMASK + BOUNDARYNORM)
+    # TAB 2: VISUALISASI MUSIMAN
     # =========================================================================
     with tab_musiman:
         st.subheader(f"🍂 Analisis Rata-Rata Musiman Periode {tahun_mulai} - {tahun_selesai}")

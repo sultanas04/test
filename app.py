@@ -1,13 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Tue Jun 30 14:20:41 2026
-
-@author: BMKG Staklim Lampung
-"""
-
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Jun 30 14:20:41 2026
+Created on Wed Jul 01 15:45:00 2026
 
 @author: BMKG Staklim Lampung
 """
@@ -20,14 +13,14 @@ import xarray as xr
 
 # --- CONFIG HALAMAN ---
 st.set_page_config(
-    page_title="Dashboard Proyeksi Iklim Staklim Lampung",
+    page_title="Dashboard Klimatologi Proyeksi Lampung",
     page_icon="⛈️",
     layout="wide",
 )
 
-st.title("⛈️ Dashboard Proyeksi Indeks Curah Hujan Ekstrem - Provinsi Lampung")
+st.title("⛈️ Dashboard Analisis Klimatologi & Musiman Proyeksi Curah Hujan")
 st.markdown(
-    "Aplikasi interaktif analisis proyeksi iklim bulanan (SSP370 & SSP585) berbasis data CMIP6."
+    "Analisis rata-rata spasial bulanan dan musiman pada periode rentang tahun proyeksi yang dipilih (Data CMIP6)."
 )
 st.write("---")
 
@@ -56,7 +49,7 @@ DRIVE_DATABASE = {
 }
 
 # =========================================================================
-# 2. DEFINISI BATAS KOORDINAT KABUPATEN DI LAMPUNG (Bbox Approximation)
+# 2. DEFINISI BATAS KOORDINAT KABUPATEN DI LAMPUNG
 # =========================================================================
 REGIONS_LAMPUNG = {
     "Seluruh Provinsi Lampung": {
@@ -85,10 +78,8 @@ REGIONS_LAMPUNG = {
 # --- SIDEBAR FILTERS ---
 st.sidebar.header("⚙️ Filter Analisis")
 
-# 1. Pilih Skenario
 skenario = st.sidebar.selectbox("1. Pilih Skenario:", options=["SSP370", "SSP585"])
 
-# 2. Pilih Model (NAMA SUDAH DISAMAKAN DENGAN DI ATAS DAN LENGKAP 6 MODEL)
 model_options = [
     "Ensemble Mean",
     "Model 1 (CESM2-WACCM)",
@@ -100,12 +91,10 @@ model_options = [
 ]
 model_pilihan = st.sidebar.selectbox("2. Pilih Model:", options=model_options)
 
-# 3. Pilih Wilayah (Provinsi / Kabupaten)
 wilayah_pilihan = st.sidebar.selectbox(
     "3. Fokus Wilayah:", options=list(REGIONS_LAMPUNG.keys())
 )
 
-# 4. Pilih Indeks Variabel
 dict_var = {
     "pr": "Total Curah Hujan (mm/bulan)",
     "hh": "Jumlah Hari Hujan (>=1mm)",
@@ -130,17 +119,13 @@ def get_data_from_drive(skenario_name, model_name):
         return None
 
     url = f"https://drive.google.com/uc?id={file_id}"
-
-    # Mengganti karakter kurung dan spasi agar nama file lokal aman/bersih
     clean_model_name = (
         model_name.replace(" ", "_").replace("(", "").replace(")", "")
     )
     local_filename = f"data_{skenario_name}_{clean_model_name}.nc"
 
     if not os.path.exists(local_filename):
-        with st.spinner(
-            f"Mengunduh data {model_name} ({skenario_name}) dari Google Drive..."
-        ):
+        with st.spinner(f"Mengunduh data {model_name} dari GDrive..."):
             gdown.download(url, local_filename, quiet=True)
 
     return xr.open_dataset(local_filename)
@@ -150,93 +135,141 @@ def get_data_from_drive(skenario_name, model_name):
 ds = get_data_from_drive(skenario, model_pilihan)
 
 if ds is None:
-    st.warning(
-        "⚠️ File ID Google Drive belum dikonfigurasi lengkap di dalam skrip."
-    )
+    st.warning("⚠️ File ID Google Drive belum dikonfigurasi dengan benar.")
 else:
-    # --- PILIH RENTANG WAKTU (TAHUN) ---
+    # --- RENTANG WAKTU SLIDER TAHUN ---
     years = sorted(list(set(ds.time.dt.year.values)))
-    st.sidebar.subheader("5. Rentang Waktu")
+    st.sidebar.subheader("5. Tentukan Rentang Tahun Analisis")
     tahun_mulai, tahun_selesai = st.sidebar.select_slider(
-        "Pilih Rentang Tahun:", options=years, value=(years[0], years[-1])
+        "Gabungkan Rentang Tahun:", options=years, value=(2021, 2030)
     )
 
-    # --- FILTER DATA BERDASARKAN RENTANG WAKTU DAN SPASIAL (WILAYAH) ---
-    ds_filtered = ds.sel(
-        time=slice(f"{tahun_mulai}-01-01", f"{tahun_selesai}-12-31")
-    )
-
+    # --- FILTER SPASIAL DAN WAKTU AWAL ---
     geo_box = REGIONS_LAMPUNG[wilayah_pilihan]
-    ds_filtered = ds_filtered.sel(
-        lat=geo_box["lat_slice"], lon=geo_box["lon_slice"]
+    ds_area = ds.sel(
+        lat=geo_box["lat_slice"],
+        lon=geo_box["lon_slice"],
+        time=slice(f"{tahun_mulai}-01-01", f"{tahun_selesai}-12-31"),
     )
 
-    # --- INPUT USER UNTUK BULAN TAMPILAN PETA ---
-    available_months = [str(t)[:7] for t in ds_filtered.time.values]
-    selected_month = st.select_slider(
-        "📅 Geser untuk memilih Bulan/Tahun Tampilan Peta:",
-        options=available_months,
+    # --- PROSES METODE INTERPOLASI (SMOOTHING PETA) ---
+    st.sidebar.subheader("🎨 Desain Visual")
+    smooth_option = st.sidebar.checkbox(
+        "Aktifkan Smoothing Peta (Interpolasi)", value=True
+    )
+    shading_method = "gouraud" if smooth_option else "flat"
+
+    # --- TAMPILAN UTAMA BERBASIS TAB ---
+    tab_bulanan, tab_musiman = st.tabs(
+        ["📅 Analisis 12 Bulan", "🍂 Analisis Musiman (Seasonal)"]
     )
 
-    # --- LAYOUT UTAMA ---
-    col1, col2 = st.columns([1, 1])
-
-    # --- KOLOM 1: PETA SPASIAL ---
-    with col1:
-        st.subheader(f"🗺️ Visualisasi Spasial - {wilayah_pilihan}")
-        st.caption(f"Menampilkan {dict_var[var_pilihan]} pada {selected_month}")
-
-        data_peta = ds_filtered[var_pilihan].sel(time=selected_month).squeeze()
-
-        fig, ax = plt.subplots(figsize=(6, 5))
-        data_peta.plot(
-            ax=ax,
-            cmap="YlGnBu" if var_pilihan != "pr" else "Blues",
-            cbar_kwargs={"label": ds[var_pilihan].attrs.get("units", "")},
+    # ==========================================
+    # TAB 1: VISUALISASI 12 BULAN (KLIMATOLOGI)
+    # ==========================================
+    with tab_bulanan:
+        st.subheader(
+            f"📊 Klimatologi Rata-Rata Bulanan Periode {tahun_mulai} - {tahun_selesai}"
         )
-        ax.set_title(f"{model_pilihan} | {selected_month}")
-        ax.set_xlabel("Bujur (Longitude)")
-        ax.set_ylabel("Lintang (Latitude)")
-        ax.grid(True, linestyle="--", alpha=0.5)
+        st.caption(
+            f"Data menunjukkan nilai rata-rata tiap bulan sepanjang tahun yang dipilih untuk variabel {dict_var[var_pilihan]}."
+        )
+
+        # Proses perhitungan rata-rata klimatologi bulanan (Groupby)
+        climatology_monthly = ds_area[var_pilihan].groupby("time.month").mean(dim="time")
+
+        # Membuat Grid Plot 3x4 untuk 12 Bulan
+        fig, axes = plt.subplots(3, 4, figsize=(15, 12), sharex=True, sharey=True)
+        month_names = [
+            "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+            "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+        ]
+
+        # Cari nilai min dan max area agar gradasi warna konsisten di semua bulan
+        vmin = float(climatology_monthly.min())
+        vmax = float(climatology_monthly.max())
+        cmap_color = "YlGnBu" if var_pilihan != "pr" else "Blues"
+
+        for i, ax in enumerate(axes.flat):
+            # i+1 merepresentasikan angka bulan (1=Jan, 12=Des)
+            data_month = climatology_monthly.sel(month=i + 1)
+
+            # Implementasi shading='gouraud' membuat peta kotak piksel kasar berubah menjadi halus/smooth
+            p = ax.pcolormesh(
+                data_month.lon,
+                data_month.lat,
+                data_month.values,
+                shading=shading_method,
+                cmap=cmap_color,
+                vmin=vmin,
+                vmax=vmax,
+            )
+            ax.set_title(month_names[i], fontsize=12, fontweight="bold")
+            ax.grid(True, linestyle="--", alpha=0.3)
+
+        # Tambahkan satu Colorbar besar terpusat di bagian kanan
+        fig.subplots_adjust(right=0.88, hspace=0.3, wspace=0.15)
+        cbar_ax = fig.add_axes([0.91, 0.15, 0.02, 0.7])
+        fig.colorbar(p, cax=cbar_ax, label=ds[var_pilihan].attrs.get("units", ""))
+
         st.pyplot(fig)
 
-    # --- KOLOM 2: TREN TIME SERIES ---
-    with col2:
-        st.subheader(f"📈 Grafik Tren ({tahun_mulai} - {tahun_selesai})")
+    # ==========================================
+    # TAB 2: VISUALISASI MUSIMAN (SEASONAL)
+    # ==========================================
+    with tab_musiman:
+        st.subheader(
+            f"🍂 Analisis Rata-Rata Musiman Periode {tahun_mulai} - {tahun_selesai}"
+        )
         st.caption(
-            f"Rata-rata nilai {dict_var[var_pilihan]} di wilayah {wilayah_pilihan}"
+            "Pembagian musim standard meteorologi: DJF (Des-Jan-Feb/Barat), MAM (Mar-Apr-Mei/Peralihan 1), JJA (Jun-Jul-Agt/Timur), SON (Sep-Okt-Nov/Peralihan 2)."
         )
 
-        data_tren = ds_filtered[var_pilihan].mean(dim=["lat", "lon"])
+        # Proses perhitungan rata-rata berdasarkan musim (Groupby 'time.season')
+        climatology_seasonal = ds_area[var_pilihan].groupby("time.season").mean(dim="time")
 
-        fig2, ax2 = plt.subplots(figsize=(7, 4.5))
-        ax2.plot(
-            ds_filtered.time.values,
-            data_tren.values,
-            color="darkblue",
-            linewidth=1.2,
-        )
-        ax2.set_ylabel(ds[var_pilihan].attrs.get("units", ""))
-        ax2.set_xlabel("Tahun")
-        ax2.grid(True, linestyle="--", alpha=0.5)
-        plt.xticks(rotation=45)
-        st.pyplot(fig2)
+        # Susun urutan musim agar logis secara meteorologi Indonesia
+        seasons_order = ["DJF", "MAM", "JJA", "SON"]
+        season_titles = {
+            "DJF": "Musim Barat / Hujan (DJF)",
+            "MAM": "Musim Peralihan I (MAM)",
+            "JJA": "Musim Timur / Kemarau (JJA)",
+            "SON": "Musim Peralihan II (SON)",
+        }
 
-    # --- RINGKASAN STATISTIK ---
-    st.write("---")
-    st.subheader(
-        f"📊 Ringkasan Statistik untuk Wilayah {wilayah_pilihan} ({selected_month})"
-    )
-    c1, c2, c3 = st.columns(3)
-    c1.metric(
-        "Nilai Tertinggi",
-        f"{float(data_peta.max()):.2f} {ds[var_pilihan].attrs.get('units', '')}",
-    )
-    c2.metric(
-        "Nilai Terendah",
-        f"{float(data_peta.min()):.2f} {ds[var_pilihan].attrs.get('units', '')}",
-    )
-    c3.metric(
-        "Rata-rata Area",
-        f"{float(data_peta.mean()):.2f} {ds[var_pilihan].attrs.get('units', '')}",
-    )
+        col_left, col_right = st.columns([3, 1])
+
+        with col_left:
+            fig2, axes2 = plt.subplots(2, 2, figsize=(12, 10), sharex=True, sharey=True)
+            vmin_s = float(climatology_seasonal.min())
+            vmax_s = float(climatology_seasonal.max())
+
+            for i, ax in enumerate(axes2.flat):
+                sea = seasons_order[i]
+                data_season = climatology_seasonal.sel(season=sea)
+
+                p2 = ax.pcolormesh(
+                    data_season.lon,
+                    data_season.lat,
+                    data_season.values,
+                    shading=shading_method,
+                    cmap=cmap_color,
+                    vmin=vmin_s,
+                    vmax=vmax_s,
+                )
+                ax.set_title(season_titles[sea], fontsize=12, fontweight="bold")
+                ax.grid(True, linestyle="--", alpha=0.3)
+
+            fig2.subplots_adjust(right=0.88, hspace=0.2, wspace=0.15)
+            cbar_ax2 = fig2.add_axes([0.92, 0.15, 0.02, 0.7])
+            fig2.colorbar(p2, cax=cbar_ax2, label=ds[var_pilihan].attrs.get("units", ""))
+
+            st.pyplot(fig2)
+
+        with col_right:
+            st.markdown("#### 📝 Insight Singkat")
+            st.info(
+                f"Analisis komparasi spasial antar musim mempermudah dalam melihat pergeseran puncak musim hujan atau tingkat keparahan musim kemarau di wilayah **{wilayah_pilihan}** pada masa depan."
+            )
+
+    ds.close()

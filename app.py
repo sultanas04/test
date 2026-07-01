@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed Jul 01 17:30:00 2026
+Created on Wed Jul 01 17:45:00 2026
 
 @author: BMKG Staklim Lampung
 """
@@ -10,7 +10,7 @@ import gdown
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
-import regionmask  # Menggunakan pemotongan mutlak 3D boolean mask
+import regionmask
 from matplotlib.colors import ListedColormap, BoundaryNorm
 import streamlit as st
 import xarray as xr
@@ -24,7 +24,7 @@ st.set_page_config(
 
 st.title("⛈️ Dashboard Proyeksi Indeks Curah Hujan Ekstrem - Provinsi Lampung")
 st.markdown(
-    "Aplikasi interaktif analisis klimatologi bulanan dan musiman (SSP370 & SSP585) dengan Masking 3D Mutlak Berbasis Regionmask."
+    "Aplikasi interaktif analisis klimatologi bulanan dan musiman (SSP370 & SSP585) - Penyelarasan Koordinat & Masking 100% Bersih."
 )
 st.write("---")
 
@@ -52,20 +52,13 @@ DRIVE_DATABASE = {
     },
 }
 
-# =========================================================================
-# 2. DEFINISI BATAS AREA KOORDINAT (Bbox)
-# =========================================================================
+# Bounding box koordinat diperluas sedikit agar interpolasi contourf di pinggir pantai tidak terpotong cacat
 REGIONS_LAMPUNG = {
-    "Seluruh Provinsi Lampung": {"lat_slice": slice(-6.0, -3.5), "lon_slice": slice(103.5, 106.0)},
-    "Bandar Lampung": {"lat_slice": slice(-5.5, -5.3), "lon_slice": slice(105.2, 105.4)},
-    "Lampung Selatan": {"lat_slice": slice(-6.0, -5.3), "lon_slice": slice(105.0, 106.0)},
-    "Lampung Tengah": {"lat_slice": slice(-5.2, -4.5), "lon_slice": slice(104.7, 105.8)},
-    "Lampung Utara": {"lat_slice": slice(-5.0, -4.3), "lon_slice": slice(104.5, 105.2)},
-    "Metro": {"lat_slice": slice(-5.1, -4.9), "lon_slice": slice(105.2, 105.4)},
+    "Seluruh Provinsi Lampung": {"lat_slice": slice(-6.2, -3.3), "lon_slice": slice(103.3, 106.2)},
 }
 
 # =========================================================================
-# 3. DEFINISI WARNA KUSTOM (DIKUNCI JUGA OLEH BOUNDARYNORM)
+# 3. DEFINISI WARNA KUSTOM BMKG (DISKRET)
 # =========================================================================
 ch_colors = [
     (0.250980392156863, 0, 0),                       # 0 - 20   : ch1
@@ -81,9 +74,6 @@ cmap_kustom = ListedColormap(ch_colors)
 clevels = [0, 20, 50, 100, 150, 200, 300, 400, 500]
 norm_kustom = BoundaryNorm(clevels, cmap_kustom.N)
 
-# =========================================================================
-# 4. FUNGSI LOAD GEOJSON BATAS KABUPATEN
-# =========================================================================
 @st.cache_data
 def load_geojson():
     geojson_path = "lampung-2014.geojson"
@@ -95,25 +85,15 @@ def load_geojson():
 
 gdf_lampung = load_geojson()
 
-# --- SIDEBAR FILTERS ---
+# --- SIDEBAR ---
 st.sidebar.header("⚙️ Filter Analisis")
 skenario = st.sidebar.selectbox("1. Pilih Skenario:", options=["SSP370", "SSP585"])
-
 model_options = ["Ensemble Mean", "Model 1 (CESM2-WACCM)", "Model 2 (GFDL-ESM4)", "Model 3 (CMCC-CM2)", "Model 4 (INM-CM4-8)", "Model 5 (INM-CM5-0)", "Model 6 (NORESM2)"]
 model_pilihan = st.sidebar.selectbox("2. Pilih Model:", options=model_options)
-wilayah_pilihan = st.sidebar.selectbox("3. Fokus Wilayah:", options=list(REGIONS_LAMPUNG.keys()))
 
-dict_var = {
-    "pr": "Total Curah Hujan (mm/bulan)",
-    "hh": "Jumlah Hari Hujan (>=1mm)",
-    "R10mm": "Jumlah Hari Hujan >10mm",
-    "R20mm": "Jumlah Hari Hujan >20mm",
-    "R50mm": "Jumlah Hari Hujan >50mm",
-    "R100mm": "Jumlah Hari Hujan >100mm",
-}
-var_pilihan = st.sidebar.selectbox("4. Pilih Indeks Iklim:", options=list(dict_var.keys()), format_func=lambda x: dict_var[x])
+dict_var = {"pr": "Total Curah Hujan (mm/bulan)"}
+var_pilihan = "pr"
 
-# --- FUNGSI DOWNLOAD DATA ---
 @st.cache_data
 def get_data_from_drive(skenario_name, model_name):
     try: file_id = DRIVE_DATABASE[skenario_name][model_name]
@@ -132,40 +112,41 @@ if ds is None:
     st.warning("⚠️ File ID Google Drive belum dikonfigurasi lengkap.")
 else:
     years = sorted(list(set(ds.time.dt.year.values)))
-    st.sidebar.subheader("5. Rentang Tahun Analisis")
+    st.sidebar.subheader("3. Rentang Tahun Analisis")
     tahun_mulai, tahun_selesai = st.sidebar.select_slider("Gabungkan Periode Tahun:", options=years, value=(2025, 2050))
 
-    # Standarisasi nama koordinat
+    # --- KUNCI PERBAIKAN 1: PENYELARASAN NAMA & FORMAT KOORDINAT GLOBAL ---
     if "latitude" in ds.coords: ds = ds.rename({"latitude": "lat"})
     if "longitude" in ds.coords: ds = ds.rename({"longitude": "lon"})
 
-    geo_box = REGIONS_LAMPUNG[wilayah_pilihan]
+    # Paksa konversi jika bujur NetCDF bertipe 0-360 derajat ke standar -180 s/d 180
+    if (ds.lon.max() > 180):
+        ds = ds.assign_coords(lon=(((ds.lon + 180) % 360) - 180))
+        ds = ds.sortby("lon")
 
-    # Mengantisipasi lintang terbalik
-    lat_start, lat_end = geo_box["lat_slice"].start, geo_box["lat_slice"].stop
+    # Ambil batas box Lampung
+    geo_box = REGIONS_LAMPUNG["Seluruh Provinsi Lampung"]
+    
+    # Deteksi arah urutan Latitude (Ascending vs Descending)
     if ds.lat.values[0] > ds.lat.values[-1]:
-        lat_slice_fixed = slice(lat_end, lat_start)
+        lat_slice_fixed = slice(geo_box["lat_slice"].stop, geo_box["lat_slice"].start)
     else:
-        lat_slice_fixed = slice(lat_start, lat_end)
+        lat_slice_fixed = slice(geo_box["lat_slice"].start, geo_box["lat_slice"].stop)
 
+    # Potong data awal
     ds_area = ds.sel(lat=lat_slice_fixed, lon=geo_box["lon_slice"], time=slice(f"{tahun_mulai}-01-01", f"{tahun_selesai}-12-31"))
 
     # =========================================================================
-    # PERBAIKAN LOGIKA: KUNCI MASKING 3D BOOLEAN (PUTIH TOTAL DI LUAR SHP)
+    # KUNCI PERBAIKAN 2: INTEGRASI MASK_3D DENGAN PROTEKSI MULTI-POLIGON
     # =========================================================================
-    if gdf_lampung is not None and wilayah_pilihan == "Seluruh Provinsi Lampung":
+    if gdf_lampung is not None:
         try:
-            # 1. Bangun objek regionmask dari geopandas dataframe
+            # Mengunci nama koordinat netCDF agar sinkron total dengan struktur GeoJSON
             lampung_rm = regionmask.from_geopandas(gdf_lampung)
-            
-            # 2. Bangun mask_3D (Menghasilkan array True/False yang sangat kaku per grid)
-            # abbrev digunakan untuk memastikan seluruh baris poligon digabung jadi satu kesatuan
             mask_3d = lampung_rm.mask_3D(ds_area.lon, ds_area.lat, lon_name="lon", lat_name="lat")
-            
-            # 3. Satukan semua baris region (jika ada lebih dari satu poligon/pulau di GeoJSON)
             mask_final = mask_3d.any(dim="region")
             
-            # 4. Potong data: Sumbu koordinat luar yang bernilai False otomatis diubah ke NaN (Bersih)
+            # Eksekusi pemotongan mutlak. Semua di luar arsir poligon DIPAKSA menjadi NaN (Putih Bersih)
             ds_area = ds_area.where(mask_final)
         except Exception as e:
             print(f"[LOG MASK_3D ERROR] {e}")
@@ -182,31 +163,26 @@ else:
         fig, axes = plt.subplots(3, 4, figsize=(15, 12), sharex=True, sharey=True)
         month_names = ["JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI", "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER"]
 
-        if var_pilihan == "pr":
-            active_levels = clevels
-            active_norm = norm_kustom
-        else:
-            v_min = float(np.nanmin(climatology_monthly.values))
-            v_max = float(np.nanmax(climatology_monthly.values))
-            active_levels = np.linspace(v_min, v_max, 9)
-            active_norm = BoundaryNorm(active_levels, cmap_kustom.N)
-
         for i, ax in enumerate(axes.flat):
             data_month = climatology_monthly.sel(month=i + 1)
 
+            # Plotting kontur diskret
             p = ax.contourf(
                 data_month.lon, data_month.lat, data_month.values,
-                levels=active_levels, 
+                levels=clevels, 
                 cmap=cmap_kustom,
-                norm=active_norm,
-                extend="max" if var_pilihan == "pr" else "neither"
+                norm=norm_kustom,
+                extend="max"
             )
 
+            # Gambar ulang garis tepi SHP di atas kontur
             if gdf_lampung is not None:
-                gdf_lampung.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=0.6, alpha=0.9)
+                gdf_lampung.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=0.7, alpha=1.0)
 
             ax.set_title(month_names[i], fontsize=11, fontweight="bold")
             ax.grid(True, linestyle="--", alpha=0.4)
+            ax.set_xlim(103.4, 106.1)
+            ax.set_ylim(-6.1, -3.4)
             ax.set_yticks([-6, -5.5, -5, -4.5, -4])
             ax.set_yticklabels(["6°S", "5.5°S", "5°S", "4.5°S", "4°S"])
             ax.set_xticks([104, 105, 106])
@@ -214,7 +190,7 @@ else:
 
         fig.subplots_adjust(bottom=0.18, hspace=0.3, wspace=0.2)
         cbar_ax = fig.add_axes([0.15, 0.08, 0.7, 0.02])
-        fig.colorbar(p, cax=cbar_ax, orientation="horizontal", label=f"{ds[var_pilihan].attrs.get('units', 'mm/bulan')}")
+        fig.colorbar(p, cax=cbar_ax, orientation="horizontal", label="mm/bulan")
         st.pyplot(fig)
 
     # =========================================================================
@@ -227,13 +203,6 @@ else:
         seasons_order = ["DJF", "MAM", "JJA", "SON"]
         season_titles = {"DJF": "MUSIM BARAT / HUJAN (DJF)", "MAM": "MUSIM PERALIHAN I (MAM)", "JJA": "MUSIM TIMUR / KEMARAU (JJA)", "SON": "MUSIM PERALIHAN II (SON)"}
 
-        if var_pilihan == "pr":
-            active_levels_s = clevels
-            active_norm_s = norm_kustom
-        else:
-            active_levels_s = np.linspace(float(np.nanmin(climatology_seasonal.values)), float(np.nanmax(climatology_seasonal.values)), 9)
-            active_norm_s = BoundaryNorm(active_levels_s, cmap_kustom.N)
-
         fig2, axes2 = plt.subplots(2, 2, figsize=(11, 10), sharex=True, sharey=True)
 
         for i, ax in enumerate(axes2.flat):
@@ -242,17 +211,19 @@ else:
 
             p2 = ax.contourf(
                 data_season.lon, data_season.lat, data_season.values,
-                levels=active_levels_s, 
+                levels=clevels, 
                 cmap=cmap_kustom,
-                norm=active_norm_s,
-                extend="max" if var_pilihan == "pr" else "neither"
+                norm=norm_kustom,
+                extend="max"
             )
 
             if gdf_lampung is not None:
-                gdf_lampung.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=0.6, alpha=0.9)
+                gdf_lampung.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=0.7, alpha=1.0)
 
             ax.set_title(season_titles[sea], fontsize=11, fontweight="bold")
             ax.grid(True, linestyle="--", alpha=0.4)
+            ax.set_xlim(103.4, 106.1)
+            ax.set_ylim(-6.1, -3.4)
             ax.set_yticks([-6, -5.5, -5, -4.5, -4])
             ax.set_yticklabels(["6°S", "5.5°S", "5°S", "4.5°S", "4°S"])
             ax.set_xticks([104, 105, 106])
@@ -260,7 +231,7 @@ else:
 
         fig2.subplots_adjust(bottom=0.15, hspace=0.2, wspace=0.2)
         cbar_ax2 = fig2.add_axes([0.15, 0.06, 0.7, 0.02])
-        fig2.colorbar(p2, cax=cbar_ax2, orientation="horizontal", label=f"{ds[var_pilihan].attrs.get('units', 'mm/bulan')}")
+        fig2.colorbar(p2, cax=cbar_ax2, orientation="horizontal", label="mm/bulan")
         st.pyplot(fig2)
 
     ds.close()

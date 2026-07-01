@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed Jul 01 18:45:00 2026
+Created on Wed Jul 01 19:00:00 2026
 
 @author: BMKG Staklim Lampung
 """
@@ -49,7 +49,7 @@ DRIVE_DATABASE = {
         "Model 3 (CMCC-CM2)": "1I3Em2dhaVGuwRwh-NpPMWhSfpgrHhYmJ",
         "Model 4 (INM-CM4-8)": "1KJeUaaCAHfIFRSX321fCDvvR6HfE-Pz_",
         "Model 5 (INM-CM5-0)": "15wR9xgX6WmuGYv651oQfMuxyIUGpNEjC",
-        "Model 6 (NORESM2)": "1SpzbI6uiwPiJbXj02xStj765Ot81eXj",
+        "Model 6 (NORESM2)": "1SpzbI6uiwPiJbXj02xWStj765Ot81eXj",
     },
 }
 
@@ -140,12 +140,11 @@ ds = get_data_from_drive(skenario, model_pilihan)
 if ds is None:
     st.warning("⚠️ File ID Google Drive belum dikonfigurasi lengkap.")
 else:
-    # Mengambil batas tahun terkecil dan terbesar dari isi data NetCDF secara otomatis
     years = sorted(list(set(ds.time.dt.year.values)))
     min_year_data = int(min(years))
     max_year_data = int(max(years))
 
-    # --- PERBAIKAN: INPUT RENTANG TAHUN DIKETIK (MENGGUNAKAN NUMBER_INPUT) ---
+    # --- INPUT RENTANG TAHUN DIKETIK ---
     st.sidebar.subheader("📅 Rentang Tahun Analisis")
     col_th1, col_th2 = st.sidebar.columns(2)
     with col_th1:
@@ -153,7 +152,6 @@ else:
     with col_th2:
         tahun_selesai = st.number_input("Tahun Selesai:", min_value=min_year_data, max_value=max_year_data, value=2050, step=1)
 
-    # Validasi logis agar tahun mulai tidak lebih besar dari tahun selesai
     if tahun_mulai > tahun_selesai:
         st.sidebar.error("⚠️ 'Tahun Mulai' tidak boleh lebih besar dari 'Tahun Selesai'!")
         st.stop()
@@ -176,14 +174,22 @@ else:
     tab_bulanan, tab_musiman = st.tabs(["📅 Analisis 12 Bulan", "🍂 Analisis Musiman (Seasonal)"])
 
     # =========================================================================
-    # TAB 1: VISUALISASI 12 BULAN
+    # TAB 1: VISUALISASI 12 BULAN (JUDUL MASUK KANVAS DAN BISA DI-DOWNLOAD)
     # =========================================================================
     with tab_bulanan:
         st.subheader(f"📊 Klimatologi Rata-Rata Bulanan Periode {tahun_mulai} - {tahun_selesai}")
         climatology_monthly = ds_area[var_pilihan].groupby("time.month").mean(dim="time")
 
-        fig, axes = plt.subplots(3, 4, figsize=(16, 13), sharex=True, sharey=True)
+        fig, axes = plt.subplots(3, 4, figsize=(16, 14), sharex=True, sharey=True)
         month_names = ["JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI", "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER"]
+
+        # Judul Masuk ke Canvas Matplotlib agar Terbawa Saat Di-download
+        fig.suptitle(
+            f"Klimatologi Rata-Rata Bulanan Periode {tahun_mulai} - {tahun_selesai}",
+            fontsize=16, 
+            fontweight="bold", 
+            y=0.95
+        )
 
         for i, ax in enumerate(axes.flat):
             data_month = climatology_monthly.sel(month=i + 1)
@@ -224,11 +230,12 @@ else:
             ax.set_xticks([104, 105, 106])
             ax.set_xticklabels(["104°E", "105°E", "106°E"])
 
-        fig.subplots_adjust(bottom=0.18, hspace=0.3, wspace=0.2)
+        fig.subplots_adjust(top=0.88, bottom=0.18, hspace=0.3, wspace=0.2)
         cbar_ax = fig.add_axes([0.15, 0.08, 0.7, 0.02])
         fig.colorbar(p, cax=cbar_ax, orientation="horizontal", label="mm/bulan")
         st.pyplot(fig)
 
+        # Proses Konversi ke PNG Buffer
         img_buffer_monthly = io.BytesIO()
         fig.savefig(img_buffer_monthly, format='png', dpi=300, bbox_inches='tight')
         img_buffer_monthly.seek(0)
@@ -241,7 +248,7 @@ else:
         )
 
     # =========================================================================
-    # TAB 2: VISUALISASI MUSIMAN
+    # TAB 2: VISUALISASI MUSIMAN (JUDUL MASUK KANVAS DAN BISA DI-DOWNLOAD)
     # =========================================================================
     with tab_musiman:
         st.subheader(f"🍂 Analisis Rata-Rata Musiman Periode {tahun_mulai} - {tahun_selesai}")
@@ -253,7 +260,15 @@ else:
             "JJA": "MUSIM TIMUR / KEMARAU (JJA)", "SON": "MUSIM PERALIHAN II (SON)"
         }
 
-        fig2, axes2 = plt.subplots(2, 2, figsize=(12, 11), sharex=True, sharey=True)
+        fig2, axes2 = plt.subplots(2, 2, figsize=(12, 12), sharex=True, sharey=True)
+
+        # Judul Masuk ke Canvas Matplotlib agar Terbawa Saat Di-download
+        fig2.suptitle(
+            f"Analisis Rata-Rata Musiman Periode {tahun_mulai} - {tahun_selesai}",
+            fontsize=15, 
+            fontweight="bold", 
+            y=0.94
+        )
 
         for i, ax in enumerate(axes2.flat):
             sea = seasons_order[i]
@@ -295,11 +310,12 @@ else:
             ax.set_xticks([104, 105, 106])
             ax.set_xticklabels(["104°E", "105°E", "106°E"])
 
-        fig2.subplots_adjust(bottom=0.15, hspace=0.2, wspace=0.2)
+        fig2.subplots_adjust(top=0.88, bottom=0.15, hspace=0.2, wspace=0.2)
         cbar_ax2 = fig2.add_axes([0.15, 0.06, 0.7, 0.02])
         fig2.colorbar(p2, cax=cbar_ax2, orientation="horizontal", label="mm/bulan")
         st.pyplot(fig2)
 
+        # Proses Konversi ke PNG Buffer
         img_buffer_seasonal = io.BytesIO()
         fig2.savefig(img_buffer_seasonal, format='png', dpi=300, bbox_inches='tight')
         img_buffer_seasonal.seek(0)

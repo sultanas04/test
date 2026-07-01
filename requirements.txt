@@ -4,4 +4,4 @@ netcdf4
 matplotlib
 gdown
 geopandas
-rioxarray
+regionmask

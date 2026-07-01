@@ -1,26 +1,28 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed Jul 01 15:45:00 2026
+Created on Wed Jul 01 16:00:00 2026
 
 @author: BMKG Staklim Lampung
 """
 
 import os
 import gdown
+import geopandas as gpd
 import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
 import streamlit as st
 import xarray as xr
 
 # --- CONFIG HALAMAN ---
 st.set_page_config(
-    page_title="Dashboard Klimatologi Proyeksi Lampung",
+    page_title="Dashboard Proyeksi Iklim Staklim Lampung",
     page_icon="⛈️",
     layout="wide",
 )
 
-st.title("⛈️ Dashboard Analisis Klimatologi & Musiman Proyeksi Curah Hujan")
+st.title("⛈️ Dashboard Proyeksi Indeks Curah Hujan Ekstrem - Provinsi Lampung")
 st.markdown(
-    "Analisis rata-rata spasial bulanan dan musiman pada periode rentang tahun proyeksi yang dipilih (Data CMIP6)."
+    "Aplikasi interaktif analisis klimatologi bulanan dan musiman (SSP370 & SSP585) berbasis data CMIP6."
 )
 st.write("---")
 
@@ -49,7 +51,7 @@ DRIVE_DATABASE = {
 }
 
 # =========================================================================
-# 2. DEFINISI BATAS KOORDINAT KABUPATEN DI LAMPUNG
+# 2. DEFINISI BATAS KOORDINAT KABUPATEN DI LAMPUNG (Bbox Approximation)
 # =========================================================================
 REGIONS_LAMPUNG = {
     "Seluruh Provinsi Lampung": {
@@ -74,6 +76,39 @@ REGIONS_LAMPUNG = {
     },
     "Metro": {"lat_slice": slice(-5.1, -4.9), "lon_slice": slice(105.2, 105.4)},
 }
+
+# =========================================================================
+# 3. DEFINISI GRADASI WARNA KUSTOM (Tuple RGB ch1 sampai ch8 Anda)
+# =========================================================================
+ch_colors = [
+    (0.250980392156863, 0, 0),  # ch1: Merah Tua (Nilai Terendah)
+    (0.490196078431373, 0.0823529411764706, 0),  # ch2
+    (1, 0.415686274509804, 0),  # ch3: Jingga
+    (1, 0.835294117647059, 0),  # ch4
+    (1, 1, 0),  # ch5: Kuning
+    (0.666666666666667, 1, 0),  # ch6
+    (0.501960784313725, 0.749019607843137, 0),  # ch7
+    (0.2, 0.6, 0),  # ch8: Hijau (Nilai Tertinggi)
+]
+cmap_kustom = LinearSegmentedColormap.from_list(
+    "Klimatologi_Lampung", ch_colors, N=256
+)
+
+
+# =========================================================================
+# 4. FUNGSI LOAD BATAS KABUPATEN DARI FILE GEOJSON HASIL KONVERSI
+# =========================================================================
+@st.cache_data
+def load_geojson():
+    geojson_path = "lampung-2014.geojson"  # Menggunakan file GeoJSON Anda
+    if os.path.exists(geojson_path):
+        return gpd.read_file(geojson_path)
+    return None
+
+
+# Panggil file peta GeoJSON
+gdf_lampung = load_geojson()
+
 
 # --- SIDEBAR FILTERS ---
 st.sidebar.header("⚙️ Filter Analisis")
@@ -125,23 +160,27 @@ def get_data_from_drive(skenario_name, model_name):
     local_filename = f"data_{skenario_name}_{clean_model_name}.nc"
 
     if not os.path.exists(local_filename):
-        with st.spinner(f"Mengunduh data {model_name} dari GDrive..."):
+        with st.spinner(
+            f"Mengunduh data {model_name} ({skenario_name}) dari Google Drive..."
+        ):
             gdown.download(url, local_filename, quiet=True)
 
     return xr.open_dataset(local_filename)
 
 
-# --- EKSEKUSI PEMBACAAN DATA ---
+# --- EKSEKUSI PEMBACAAN DATA NETCDF ---
 ds = get_data_from_drive(skenario, model_pilihan)
 
 if ds is None:
-    st.warning("⚠️ File ID Google Drive belum dikonfigurasi dengan benar.")
+    st.warning(
+        "⚠️ File ID Google Drive belum dikonfigurasi lengkap di dalam skrip."
+    )
 else:
-    # --- RENTANG WAKTU SLIDER TAHUN ---
+    # --- PILIH RENTANG WAKTU (TAHUN ANALISIS) ---
     years = sorted(list(set(ds.time.dt.year.values)))
-    st.sidebar.subheader("5. Tentukan Rentang Tahun Analisis")
+    st.sidebar.subheader("5. Rentang Tahun Analisis")
     tahun_mulai, tahun_selesai = st.sidebar.select_slider(
-        "Gabungkan Rentang Tahun:", options=years, value=(2021, 2030)
+        "Gabungkan Periode Tahun:", options=years, value=(2021, 2030)
     )
 
     # --- FILTER SPASIAL DAN WAKTU AWAL ---
@@ -152,30 +191,35 @@ else:
         time=slice(f"{tahun_mulai}-01-01", f"{tahun_selesai}-12-31"),
     )
 
-    # --- PROSES METODE INTERPOLASI (SMOOTHING PETA) ---
+    # --- SIDEBAR DESAIN VISUAL (SMOOTHING OPTION) ---
     st.sidebar.subheader("🎨 Desain Visual")
     smooth_option = st.sidebar.checkbox(
         "Aktifkan Smoothing Peta (Interpolasi)", value=True
     )
     shading_method = "gouraud" if smooth_option else "flat"
 
+    if gdf_lampung is None:
+        st.sidebar.error(
+            "⚠️ File 'lampung-2014.geojson' tidak ditemukan di folder proyek!"
+        )
+
     # --- TAMPILAN UTAMA BERBASIS TAB ---
     tab_bulanan, tab_musiman = st.tabs(
         ["📅 Analisis 12 Bulan", "🍂 Analisis Musiman (Seasonal)"]
     )
 
-    # ==========================================
-    # TAB 1: VISUALISASI 12 BULAN (KLIMATOLOGI)
-    # ==========================================
+    # =========================================================================
+    # TAB 1: VISUALISASI 12 BULAN (KLIMATOLOGI PERIODE PILIHAN)
+    # =========================================================================
     with tab_bulanan:
         st.subheader(
             f"📊 Klimatologi Rata-Rata Bulanan Periode {tahun_mulai} - {tahun_selesai}"
         )
         st.caption(
-            f"Data menunjukkan nilai rata-rata tiap bulan sepanjang tahun yang dipilih untuk variabel {dict_var[var_pilihan]}."
+            f"Menampilkan peta rata-rata spasial bulanan sepanjang periode {tahun_mulai}-{tahun_selesai} untuk variabel {dict_var[var_pilihan]}."
         )
 
-        # Proses perhitungan rata-rata klimatologi bulanan (Groupby)
+        # Logika Inti: Menghitung rata-rata klimatologi bulanan berdasarkan rentang tahun terpilih
         climatology_monthly = ds_area[var_pilihan].groupby("time.month").mean(dim="time")
 
         # Membuat Grid Plot 3x4 untuk 12 Bulan
@@ -185,50 +229,58 @@ else:
             "Juli", "Agustus", "September", "Oktober", "November", "Desember"
         ]
 
-        # Cari nilai min dan max area agar gradasi warna konsisten di semua bulan
+        # Menyetel batas minimal & maksimal visualisasi warna agar seragam di semua bulan
         vmin = float(climatology_monthly.min())
         vmax = float(climatology_monthly.max())
-        cmap_color = "YlGnBu" if var_pilihan != "pr" else "Blues"
 
         for i, ax in enumerate(axes.flat):
-            # i+1 merepresentasikan angka bulan (1=Jan, 12=Des)
             data_month = climatology_monthly.sel(month=i + 1)
 
-            # Implementasi shading='gouraud' membuat peta kotak piksel kasar berubah menjadi halus/smooth
+            # 1. Gambar peta gradasi iklim
             p = ax.pcolormesh(
                 data_month.lon,
                 data_month.lat,
                 data_month.values,
                 shading=shading_method,
-                cmap=cmap_color,
+                cmap=cmap_kustom,  # Menggunakan colormap kustom ch1-ch8 Anda
                 vmin=vmin,
                 vmax=vmax,
             )
+
+            # 2. Gambar garis batas administrasi kabupaten (SHP/GeoJSON Overlay)
+            if gdf_lampung is not None:
+                gdf_lampung.plot(
+                    ax=ax,
+                    facecolor="none",
+                    edgecolor="black",
+                    linewidth=0.6,
+                    alpha=0.7,
+                )
+
             ax.set_title(month_names[i], fontsize=12, fontweight="bold")
             ax.grid(True, linestyle="--", alpha=0.3)
 
-        # Tambahkan satu Colorbar besar terpusat di bagian kanan
+        # Membuat Colorbar Terpusat di Sebelah Kanan Grid
         fig.subplots_adjust(right=0.88, hspace=0.3, wspace=0.15)
         cbar_ax = fig.add_axes([0.91, 0.15, 0.02, 0.7])
         fig.colorbar(p, cax=cbar_ax, label=ds[var_pilihan].attrs.get("units", ""))
 
         st.pyplot(fig)
 
-    # ==========================================
-    # TAB 2: VISUALISASI MUSIMAN (SEASONAL)
-    # ==========================================
+    # =========================================================================
+    # TAB 2: VISUALISASI MUSIMAN (DJF, MAM, JJA, SON)
+    # =========================================================================
     with tab_musiman:
         st.subheader(
             f"🍂 Analisis Rata-Rata Musiman Periode {tahun_mulai} - {tahun_selesai}"
         )
         st.caption(
-            "Pembagian musim standard meteorologi: DJF (Des-Jan-Feb/Barat), MAM (Mar-Apr-Mei/Peralihan 1), JJA (Jun-Jul-Agt/Timur), SON (Sep-Okt-Nov/Peralihan 2)."
+            "Pembagian musim meteorologi: DJF (Des-Jan-Feb), MAM (Mar-Apr-Mei), JJA (Jun-Jul-Agt), SON (Sep-Okt-Nov)."
         )
 
-        # Proses perhitungan rata-rata berdasarkan musim (Groupby 'time.season')
+        # Logika Inti: Menghitung rata-rata musiman sepanjang rentang tahun terpilih
         climatology_seasonal = ds_area[var_pilihan].groupby("time.season").mean(dim="time")
 
-        # Susun urutan musim agar logis secara meteorologi Indonesia
         seasons_order = ["DJF", "MAM", "JJA", "SON"]
         season_titles = {
             "DJF": "Musim Barat / Hujan (DJF)",
@@ -248,28 +300,42 @@ else:
                 sea = seasons_order[i]
                 data_season = climatology_seasonal.sel(season=sea)
 
+                # 1. Gambar peta gradasi iklim musiman
                 p2 = ax.pcolormesh(
                     data_season.lon,
                     data_season.lat,
                     data_season.values,
                     shading=shading_method,
-                    cmap=cmap_color,
+                    cmap=cmap_kustom,  # Menggunakan colormap kustom ch1-ch8 Anda
                     vmin=vmin_s,
                     vmax=vmax_s,
                 )
+
+                # 2. Gambar garis batas administrasi kabupaten (SHP/GeoJSON Overlay)
+                if gdf_lampung is not None:
+                    gdf_lampung.plot(
+                        ax=ax,
+                        facecolor="none",
+                        edgecolor="black",
+                        linewidth=0.6,
+                        alpha=0.7,
+                    )
+
                 ax.set_title(season_titles[sea], fontsize=12, fontweight="bold")
                 ax.grid(True, linestyle="--", alpha=0.3)
 
             fig2.subplots_adjust(right=0.88, hspace=0.2, wspace=0.15)
             cbar_ax2 = fig2.add_axes([0.92, 0.15, 0.02, 0.7])
-            fig2.colorbar(p2, cax=cbar_ax2, label=ds[var_pilihan].attrs.get("units", ""))
+            fig2.colorbar(
+                p2, cax=cbar_ax2, label=ds[var_pilihan].attrs.get("units", "")
+            )
 
             st.pyplot(fig2)
 
         with col_right:
-            st.markdown("#### 📝 Insight Singkat")
+            st.markdown("#### 📝 Ringkasan Analisis")
             st.info(
-                f"Analisis komparasi spasial antar musim mempermudah dalam melihat pergeseran puncak musim hujan atau tingkat keparahan musim kemarau di wilayah **{wilayah_pilihan}** pada masa depan."
+                f"Analisis komparasi spasial per-musim ini membantu memvisualisasikan daerah mana saja di **{wilayah_pilihan}** yang rentan mengalami kekeringan ekstrem pada musim JJA atau curah hujan sangat tinggi pada musim DJF di masa depan."
             )
 
     ds.close()

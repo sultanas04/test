@@ -5,6 +5,13 @@ Created on Tue Jun 30 14:20:41 2026
 @author: BMKG Staklim Lampung
 """
 
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Jun 30 14:20:41 2026
+
+@author: BMKG Staklim Lampung
+"""
+
 import os
 import gdown
 import matplotlib.pyplot as plt
@@ -168,3 +175,68 @@ else:
     available_months = [str(t)[:7] for t in ds_filtered.time.values]
     selected_month = st.select_slider(
         "📅 Geser untuk memilih Bulan/Tahun Tampilan Peta:",
+        options=available_months,
+    )
+
+    # --- LAYOUT UTAMA ---
+    col1, col2 = st.columns([1, 1])
+
+    # --- KOLOM 1: PETA SPASIAL ---
+    with col1:
+        st.subheader(f"🗺️ Visualisasi Spasial - {wilayah_pilihan}")
+        st.caption(f"Menampilkan {dict_var[var_pilihan]} pada {selected_month}")
+
+        data_peta = ds_filtered[var_pilihan].sel(time=selected_month).squeeze()
+
+        fig, ax = plt.subplots(figsize=(6, 5))
+        data_peta.plot(
+            ax=ax,
+            cmap="YlGnBu" if var_pilihan != "pr" else "Blues",
+            cbar_kwargs={"label": ds[var_pilihan].attrs.get("units", "")},
+        )
+        ax.set_title(f"{model_pilihan} | {selected_month}")
+        ax.set_xlabel("Bujur (Longitude)")
+        ax.set_ylabel("Lintang (Latitude)")
+        ax.grid(True, linestyle="--", alpha=0.5)
+        st.pyplot(fig)
+
+    # --- KOLOM 2: TREN TIME SERIES ---
+    with col2:
+        st.subheader(f"📈 Grafik Tren ({tahun_mulai} - {tahun_selesai})")
+        st.caption(
+            f"Rata-rata nilai {dict_var[var_pilihan]} di wilayah {wilayah_pilihan}"
+        )
+
+        data_tren = ds_filtered[var_pilihan].mean(dim=["lat", "lon"])
+
+        fig2, ax2 = plt.subplots(figsize=(7, 4.5))
+        ax2.plot(
+            ds_filtered.time.values,
+            data_tren.values,
+            color="darkblue",
+            linewidth=1.2,
+        )
+        ax2.set_ylabel(ds[var_pilihan].attrs.get("units", ""))
+        ax2.set_xlabel("Tahun")
+        ax2.grid(True, linestyle="--", alpha=0.5)
+        plt.xticks(rotation=45)
+        st.pyplot(fig2)
+
+    # --- RINGKASAN STATISTIK ---
+    st.write("---")
+    st.subheader(
+        f"📊 Ringkasan Statistik untuk Wilayah {wilayah_pilihan} ({selected_month})"
+    )
+    c1, c2, c3 = st.columns(3)
+    c1.metric(
+        "Nilai Tertinggi",
+        f"{float(data_peta.max()):.2f} {ds[var_pilihan].attrs.get('units', '')}",
+    )
+    c2.metric(
+        "Nilai Terendah",
+        f"{float(data_peta.min()):.2f} {ds[var_pilihan].attrs.get('units', '')}",
+    )
+    c3.metric(
+        "Rata-rata Area",
+        f"{float(data_peta.mean()):.2f} {ds[var_pilihan].attrs.get('units', '')}",
+    )

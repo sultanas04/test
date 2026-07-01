@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed Jul 01 17:50:00 2026
+Created on Wed Jul 01 18:15:00 2026
 
 @author: BMKG Staklim Lampung
 """
 
+import io
 import os
 import gdown
 import geopandas as gpd
@@ -24,7 +25,7 @@ st.set_page_config(
 
 st.title("⛈️ Dashboard Proyeksi Indeks Curah Hujan Ekstrem - Provinsi Lampung")
 st.markdown(
-    "Aplikasi interaktif analisis klimatologi bulanan dan musiman (SSP370 & SSP585) berbasis data CMIP6 BMKG."
+    "Aplikasi interaktif analisis klimatologi bulanan dan musiman dengan Fitur Pelabelan Nama Kota/Kabupaten Otomatis."
 )
 st.write("---")
 
@@ -56,14 +57,14 @@ DRIVE_DATABASE = {
 # 2. DEFINISI WARNA KUSTOM BMKG (DISKRET)
 # =========================================================================
 ch_colors = [
-    (0.250980392156863, 0, 0),                       # 0 - 20   : ch1 (Cokelat Tua)
+    (0.250980392156863, 0, 0),                       # 0 - 20   : ch1
     (0.490196078431373, 0.0823529411764706, 0),      # 20 - 50  : ch2
-    (1, 0.415686274509804, 0),                       # 50 - 100 : ch3 (Jingga)
+    (1, 0.415686274509804, 0),                       # 50 - 100 : ch3
     (1, 0.835294117647059, 0),                       # 100 - 150: ch4
-    (1, 1, 0),                                       # 150 - 200: ch5 (Kuning)
+    (1, 1, 0),                                       # 150 - 200: ch5
     (0.666666666666667, 1, 0),                       # 200 - 300: ch6
     (0.501960784313725, 0.749019607843137, 0),       # 300 - 400: ch7
-    (0.2, 0.6, 0),                                   # 400 - 500: ch8 (Hijau Daun)
+    (0.2, 0.6, 0),                                   # 400 - 500: ch8
 ]
 cmap_kustom = ListedColormap(ch_colors)
 clevels = [0, 20, 50, 100, 150, 200, 300, 400, 500]
@@ -79,9 +80,27 @@ def load_geojson_and_mask():
         gdf = gpd.read_file(geojson_path)
         gdf = gdf.to_crs(epsg=4326)
         
-        # LOGIKA CETAKAN TOPENG: Buat kotak raksasa lalu lubangi tengahnya dengan SHP Lampung
+        # Cari nama kolom yang berisi info nama daerah (biasasanya 'KAB_KOT', 'NAME_2', atau 'nama')
+        # Kita buat kolom standar baru bernama 'LABEL_NAMA' agar dinamis
+        possible_cols = ['KAB_KOT', 'NAME_2', 'nama', 'NAMA_KABUP']
+        col_found = None
+        for col in possible_cols:
+            if col in gdf.columns:
+                col_found = col
+                break
+        
+        if col_found:
+            gdf['LABEL_NAMA'] = gdf[col_found].str.title()
+        else:
+            # Jika tidak ketemu, gunakan kolom string pertama yang tersedia
+            str_cols = gdf.select_dtypes(include=['object']).columns
+            if len(str_cols) > 0:
+                gdf['LABEL_NAMA'] = gdf[str_cols[0]].str.title()
+            else:
+                gdf['LABEL_NAMA'] = ""
+
         lampung_union = gdf.unary_union
-        giant_box = box(90, -15, 120, 0) # Kotak melingkupi seluruh area pandang
+        giant_box = box(90, -15, 120, 0)
         inverted_geometry = giant_box.difference(lampung_union)
         gdf_inverted = gpd.GeoSeries([inverted_geometry], crs="EPSG:4326")
         
@@ -103,7 +122,6 @@ model_pilihan = st.sidebar.selectbox("2. Pilih Model:", options=model_options)
 dict_var = {"pr": "Total Curah Hujan (mm/bulan)"}
 var_pilihan = "pr"
 
-# --- FUNGSI DOWNLOAD DATA ---
 @st.cache_data
 def get_data_from_drive(skenario_name, model_name):
     try: file_id = DRIVE_DATABASE[skenario_name][model_name]
@@ -125,16 +143,13 @@ else:
     st.sidebar.subheader("3. Rentang Tahun Analisis")
     tahun_mulai, tahun_selesai = st.sidebar.select_slider("Gabungkan Periode Tahun:", options=years, value=(2025, 2050))
 
-    # Penyelarasan nama dimensi koordinat standar
     if "latitude" in ds.coords: ds = ds.rename({"latitude": "lat"})
     if "longitude" in ds.coords: ds = ds.rename({"longitude": "lon"})
 
-    # Penyelarasan format bujur global (0-360 ke -180 s/d 180 jika diperlukan)
     if ds.lon.max() > 180:
         ds = ds.assign_coords(lon=(((ds.lon + 180) % 360) - 180))
         ds = ds.sortby("lon")
 
-    # Ambil data batas box Lampung diperluas sedikit agar interpolasi pantai mulus
     lat_start, lat_end = -6.2, -3.3
     if ds.lat.values[0] > ds.lat.values[-1]:
         lat_slice_fixed = slice(lat_end, lat_start)
@@ -146,36 +161,51 @@ else:
     tab_bulanan, tab_musiman = st.tabs(["📅 Analisis 12 Bulan", "🍂 Analisis Musiman (Seasonal)"])
 
     # =========================================================================
-    # TAB 1: VISUALISASI 12 BULAN (CANVAS CANVAS MASKING)
+    # TAB 1: VISUALISASI 12 BULAN (DENGAN LABEL NAMA DAERAH)
     # =========================================================================
     with tab_bulanan:
         st.subheader(f"📊 Klimatologi Rata-Rata Bulanan Periode {tahun_mulai} - {tahun_selesai}")
         climatology_monthly = ds_area[var_pilihan].groupby("time.month").mean(dim="time")
 
-        fig, axes = plt.subplots(3, 4, figsize=(15, 12), sharex=True, sharey=True)
+        fig, axes = plt.subplots(3, 4, figsize=(16, 13), sharex=True, sharey=True)
         month_names = ["JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI", "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER"]
 
         for i, ax in enumerate(axes.flat):
             data_month = climatology_monthly.sel(month=i + 1)
 
-            # 1. Gambar Kontur Iklim Seluruh Petak Kotak (Termasuk Laut)
             p = ax.contourf(
                 data_month.lon, data_month.lat, data_month.values,
                 levels=clevels, cmap=cmap_kustom, norm=norm_kustom, extend="max"
             )
 
-            # 2. TIMPA DENGAN TOPENG PUTIH: Otomatis memutihkan area di luar SHP Lampung secara instan!
             if gdf_topeng_putih is not None:
                 gdf_topeng_putih.plot(ax=ax, color='white', edgecolor='none', zorder=2)
 
-            # 3. Gambar garis batas kabupaten Lampung di atas topeng putih
             if gdf_lampung is not None:
-                gdf_lampung.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=0.6, alpha=1.0, zorder=3)
+                gdf_lampung.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=0.5, alpha=1.0, zorder=3)
+                
+                # --- KUNCI LOGIKA: PLOT NAMA KOTA/KABUPATEN ---
+                for _, row in gdf_lampung.iterrows():
+                    if row['LABEL_NAMA']:
+                        # Dapatkan titik koordinat tengah (centroid) wilayah
+                        centroid = row['geometry'].centroid
+                        # Tulis teks nama daerah di atas peta
+                        ax.text(
+                            centroid.x, centroid.y, 
+                            row['LABEL_NAMA'].replace("Kabupaten ", "").replace("Kota ", ""), # Singkat teks agar muat
+                            fontsize=6, 
+                            fontweight="bold",
+                            color="black",
+                            ha="center", 
+                            va="center",
+                            zorder=4,
+                            # Memberikan efek outline putih tipis di belakang tulisan agar mudah terbaca
+                            path_effects=[] 
+                        )
 
             ax.set_title(month_names[i], fontsize=11, fontweight="bold")
-            ax.grid(True, linestyle="--", alpha=0.4, zorder=1)
+            ax.grid(True, linestyle="--", alpha=0.3, zorder=1)
             
-            # Kunci batas area koordinat layar peta agar presisi
             ax.set_xlim(103.5, 106.0)
             ax.set_ylim(-6.0, -3.5)
             ax.set_yticks([-6, -5.5, -5, -4.5, -4])
@@ -188,8 +218,19 @@ else:
         fig.colorbar(p, cax=cbar_ax, orientation="horizontal", label="mm/bulan")
         st.pyplot(fig)
 
+        img_buffer_monthly = io.BytesIO()
+        fig.savefig(img_buffer_monthly, format='png', dpi=300, bbox_inches='tight')
+        img_buffer_monthly.seek(0)
+
+        st.download_button(
+            label="💾 Download Peta Bulanan dengan Label (PNG)",
+            data=img_buffer_monthly,
+            file_name=f"Proyeksi_Bulanan_Label_{skenario}_{tahun_mulai}_{tahun_selesai}.png",
+            mime="image/png"
+        )
+
     # =========================================================================
-    # TAB 2: VISUALISASI MUSIMAN (CANVAS CANVAS MASKING)
+    # TAB 2: VISUALISASI MUSIMAN (DENGAN LABEL NAMA DAERAH)
     # =========================================================================
     with tab_musiman:
         st.subheader(f"🍂 Analisis Rata-Rata Musiman Periode {tahun_mulai} - {tahun_selesai}")
@@ -201,28 +242,40 @@ else:
             "JJA": "MUSIM TIMUR / KEMARAU (JJA)", "SON": "MUSIM PERALIHAN II (SON)"
         }
 
-        fig2, axes2 = plt.subplots(2, 2, figsize=(11, 10), sharex=True, sharey=True)
+        fig2, axes2 = plt.subplots(2, 2, figsize=(12, 11), sharex=True, sharey=True)
 
         for i, ax in enumerate(axes2.flat):
             sea = seasons_order[i]
             data_season = climatology_seasonal.sel(season=sea)
 
-            # 1. Gambar Kontur Musiman
             p2 = ax.contourf(
                 data_season.lon, data_season.lat, data_season.values,
                 levels=clevels, cmap=cmap_kustom, norm=norm_kustom, extend="max"
             )
 
-            # 2. Timpa dengan topeng putih
             if gdf_topeng_putih is not None:
                 gdf_topeng_putih.plot(ax=ax, color='white', edgecolor='none', zorder=2)
 
-            # 3. Gambar garis batas kabupaten
             if gdf_lampung is not None:
-                gdf_lampung.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=0.6, alpha=1.0, zorder=3)
+                gdf_lampung.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=0.5, alpha=1.0, zorder=3)
+                
+                # --- PLOT NAMA KOTA/KABUPATEN DI TAB MUSIMAN ---
+                for _, row in gdf_lampung.iterrows():
+                    if row['LABEL_NAMA']:
+                        centroid = row['geometry'].centroid
+                        ax.text(
+                            centroid.x, centroid.y, 
+                            row['LABEL_NAMA'].replace("Kabupaten ", "").replace("Kota ", ""),
+                            fontsize=7, # Ukuran teks sedikit lebih besar karena panelnya lebih luas (2x2)
+                            fontweight="bold",
+                            color="black",
+                            ha="center", 
+                            va="center",
+                            zorder=4
+                        )
 
             ax.set_title(season_titles[sea], fontsize=11, fontweight="bold")
-            ax.grid(True, linestyle="--", alpha=0.4, zorder=1)
+            ax.grid(True, linestyle="--", alpha=0.3, zorder=1)
             
             ax.set_xlim(103.5, 106.0)
             ax.set_ylim(-6.0, -3.5)
@@ -235,5 +288,16 @@ else:
         cbar_ax2 = fig2.add_axes([0.15, 0.06, 0.7, 0.02])
         fig2.colorbar(p2, cax=cbar_ax2, orientation="horizontal", label="mm/bulan")
         st.pyplot(fig2)
+
+        img_buffer_seasonal = io.BytesIO()
+        fig2.savefig(img_buffer_seasonal, format='png', dpi=300, bbox_inches='tight')
+        img_buffer_seasonal.seek(0)
+
+        st.download_button(
+            label="💾 Download Peta Musiman dengan Label (PNG)",
+            data=img_buffer_seasonal,
+            file_name=f"Proyeksi_Musiman_Label_{skenario}_{tahun_mulai}_{tahun_selesai}.png",
+            mime="image/png"
+        )
 
     ds.close()

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed Jul 01 17:00:00 2026
+Created on Wed Jul 01 17:15:00 2026
 
 @author: BMKG Staklim Lampung
 """
@@ -10,7 +10,7 @@ import gdown
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
-import rioxarray  # Ekstensi penting untuk memotong (clipping) data netCDF
+import regionmask  # Library masking terbaik untuk NetCDF/CMIP6
 from matplotlib.colors import ListedColormap, BoundaryNorm
 import streamlit as st
 import xarray as xr
@@ -24,7 +24,7 @@ st.set_page_config(
 
 st.title("⛈️ Dashboard Proyeksi Indeks Curah Hujan Ekstrem - Provinsi Lampung")
 st.markdown(
-    "Aplikasi interaktif analisis klimatologi bulanan dan musiman (SSP370 & SSP585) dengan Masking Wilayah SHP & Warna Kustom Terkunci."
+    "Aplikasi interaktif analisis klimatologi bulanan dan musiman (SSP370 & SSP585) dengan Masking Presisi Berbasis Regionmask."
 )
 st.write("---")
 
@@ -53,7 +53,7 @@ DRIVE_DATABASE = {
 }
 
 # =========================================================================
-# 2. DEFINISI BATAS AREA KOORDINAT (Bbox Approximation)
+# 2. DEFINISI BATAS AREA KOORDINAT (Bbox)
 # =========================================================================
 REGIONS_LAMPUNG = {
     "Seluruh Provinsi Lampung": {"lat_slice": slice(-6.0, -3.5), "lon_slice": slice(103.5, 106.0)},
@@ -65,21 +65,19 @@ REGIONS_LAMPUNG = {
 }
 
 # =========================================================================
-# 3. DEFINISI WARNA KUSTOM (DIKUNCI OLEH BOUNDARYNORM AGAR WARNA SESUAI NILAI)
+# 3. DEFINISI WARNA KUSTOM (DIKUNCI JUGA OLEH BOUNDARYNORM)
 # =========================================================================
 ch_colors = [
-    (0.250980392156863, 0, 0),                       # 0 - 20   : ch1 (Merah Tua/Cokelat)
+    (0.250980392156863, 0, 0),                       # 0 - 20   : ch1
     (0.490196078431373, 0.0823529411764706, 0),      # 20 - 50  : ch2
-    (1, 0.415686274509804, 0),                       # 50 - 100 : ch3 (Jingga)
+    (1, 0.415686274509804, 0),                       # 50 - 100 : ch3
     (1, 0.835294117647059, 0),                       # 100 - 150: ch4
-    (1, 1, 0),                                       # 150 - 200: ch5 (Kuning)
+    (1, 1, 0),                                       # 150 - 200: ch5
     (0.666666666666667, 1, 0),                       # 200 - 300: ch6
     (0.501960784313725, 0.749019607843137, 0),       # 300 - 400: ch7
-    (0.2, 0.6, 0),                                   # 400 - 500: ch8 (Hijau Tua)
+    (0.2, 0.6, 0),                                   # 400 - 500: ch8
 ]
 cmap_kustom = ListedColormap(ch_colors)
-
-# Batas kelas curah hujan bulanan BMKG sesuai gambar contoh Anda
 clevels = [0, 20, 50, 100, 150, 200, 300, 400, 500]
 norm_kustom = BoundaryNorm(clevels, cmap_kustom.N)
 
@@ -91,7 +89,6 @@ def load_geojson():
     geojson_path = "lampung-2014.geojson"
     if os.path.exists(geojson_path):
         gdf = gpd.read_file(geojson_path)
-        # Amankan proyeksi koordinat ke standar geografis WGS84
         gdf = gdf.to_crs(epsg=4326)
         return gdf
     return None
@@ -138,14 +135,13 @@ else:
     st.sidebar.subheader("5. Rentang Tahun Analisis")
     tahun_mulai, tahun_selesai = st.sidebar.select_slider("Gabungkan Periode Tahun:", options=years, value=(2025, 2050))
 
-    # --- PENYERAGAMAN KOORDINAT NAMA DIMENSI ---
+    # Standarisasi nama koordinat
     if "latitude" in ds.coords: ds = ds.rename({"latitude": "lat"})
     if "longitude" in ds.coords: ds = ds.rename({"longitude": "lon"})
 
-    # Potong data waktu dan kotak wilayah dasar (bounding box)
     geo_box = REGIONS_LAMPUNG[wilayah_pilihan]
 
-    # Mengantisipasi jika urutan koordinat lintang (lat) terbalik arah pada model tertentu
+    # Mengantisipasi lintang terbalik
     lat_start, lat_end = geo_box["lat_slice"].start, geo_box["lat_slice"].stop
     if ds.lat.values[0] > ds.lat.values[-1]:
         lat_slice_fixed = slice(lat_end, lat_start)
@@ -154,19 +150,27 @@ else:
 
     ds_area = ds.sel(lat=lat_slice_fixed, lon=geo_box["lon_slice"], time=slice(f"{tahun_mulai}-01-01", f"{tahun_selesai}-12-31"))
 
-    # --- PROSES MASKING/CLIPPING DATA BERDASARKAN POLIGON SHP ---
-    ds_area = ds_area.rio.write_crs("EPSG:4326")
+    # =========================================================================
+    # LOGIKA INTI REGIONMASK (SANGAT PRESISI & RINGAN)
+    # =========================================================================
     if gdf_lampung is not None and wilayah_pilihan == "Seluruh Provinsi Lampung":
         try:
-            # Memotong netCDF presisi mengikuti lekukan batas daratan GeoJSON Lampung
-            ds_area = ds_area.rio.clip(gdf_lampung.geometry, gdf_lampung.crs, drop=False)
+            # 1. Membuat objek mask dari geometri file GeoJSON Anda
+            lampung_mask = regionmask.from_geopandas(gdf_lampung)
+            
+            # 2. Membuat matriks 2D boolean mask yang pas dengan koordinat grid netCDF
+            # lon_name dan lat_name dikunci eksplisit agar tidak salah tebak
+            mask = lampung_mask.mask(ds_area.lon, ds_area.lat, lon_name="lon", lat_name="lat")
+            
+            # 3. Menghapus data di luar daratan Lampung (diubah jadi NaN / Kosong)
+            ds_area = ds_area.where(~np.isnan(mask))
         except Exception as e:
-            print(f"[LOG ERROR MASKING] {e}")
+            print(f"[LOG REGIONMASK ERROR] {e}")
 
     tab_bulanan, tab_musiman = st.tabs(["📅 Analisis 12 Bulan", "🍂 Analisis Musiman (Seasonal)"])
 
     # =========================================================================
-    # TAB 1: VISUALISASI 12 BULAN (TERKUNCI MASKING & KELAS WARNA)
+    # TAB 1: VISUALISASI 12 BULAN (REGIONMASK + BOUNDARYNORM)
     # =========================================================================
     with tab_bulanan:
         st.subheader(f"📊 Klimatologi Rata-Rata Bulanan Periode {tahun_mulai} - {tahun_selesai}")
@@ -175,7 +179,6 @@ else:
         fig, axes = plt.subplots(3, 4, figsize=(15, 12), sharex=True, sharey=True)
         month_names = ["JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI", "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER"]
 
-        # Penyesuaian skala jika user memilih indeks di luar pr (Curah Hujan Bulanan)
         if var_pilihan == "pr":
             active_levels = clevels
             active_norm = norm_kustom
@@ -188,7 +191,6 @@ else:
         for i, ax in enumerate(axes.flat):
             data_month = climatology_monthly.sel(month=i + 1)
 
-            # Plot contourf terisi hanya pada area daratan yang lolos masking poligon
             p = ax.contourf(
                 data_month.lon, data_month.lat, data_month.values,
                 levels=active_levels, 
@@ -197,7 +199,6 @@ else:
                 extend="max" if var_pilihan == "pr" else "neither"
             )
 
-            # Overlay garis batas administrasi kabupaten
             if gdf_lampung is not None:
                 gdf_lampung.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=0.6, alpha=0.9)
 
@@ -208,14 +209,13 @@ else:
             ax.set_xticks([104, 105, 106])
             ax.set_xticklabels(["104°E", "105°E", "106°E"])
 
-        # Menempatkan Colorbar Horizontal di Sisi Bawah Grid Sesuai Contoh Gambar
         fig.subplots_adjust(bottom=0.18, hspace=0.3, wspace=0.2)
         cbar_ax = fig.add_axes([0.15, 0.08, 0.7, 0.02])
         fig.colorbar(p, cax=cbar_ax, orientation="horizontal", label=f"{ds[var_pilihan].attrs.get('units', 'mm/bulan')}")
         st.pyplot(fig)
 
     # =========================================================================
-    # TAB 2: VISUALISASI MUSIMAN (TERKUNCI MASKING & KELAS WARNA)
+    # TAB 2: VISUALISASI MUSIMAN (REGIONMASK + BOUNDARYNORM)
     # =========================================================================
     with tab_musiman:
         st.subheader(f"🍂 Analisis Rata-Rata Musiman Periode {tahun_mulai} - {tahun_selesai}")

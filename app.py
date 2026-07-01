@@ -145,7 +145,7 @@ else:
     if "rio" not in ds_area.dims:
         ds_area = ds_area.rio.write_crs("EPSG:4326")
         if 'lon' in ds_area.coords and 'lat' in ds_area.coords:
-            ds_area = ds_area.rio.set_spatial_dims(x='lon', y='lat', inplace=True)
+            ds_area = ds_area.rio.set_spatial_dims(x='lon', y='lat')
 
     # Memotong data iklim secara presisi mengikuti lekukan bentuk SHP Lampung
     if gdf_lampung is not None and wilayah_pilihan == "Seluruh Provinsi Lampung":

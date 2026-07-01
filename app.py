@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed Jul 01 16:00:00 2026
+Created on Wed Jul 01 16:30:00 2026
 
 @author: BMKG Staklim Lampung
 """
@@ -9,6 +9,7 @@ import os
 import gdown
 import geopandas as gpd
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
 import streamlit as st
 import xarray as xr
@@ -94,17 +95,15 @@ cmap_kustom = LinearSegmentedColormap.from_list(
     "Klimatologi_Lampung", ch_colors, N=256
 )
 
-
 # =========================================================================
 # 4. FUNGSI LOAD BATAS KABUPATEN DARI FILE GEOJSON HASIL KONVERSI
 # =========================================================================
 @st.cache_data
 def load_geojson():
-    geojson_path = "lampung-2014.geojson"  # Menggunakan file GeoJSON Anda
+    geojson_path = "lampung-2014.geojson"
     if os.path.exists(geojson_path):
         return gpd.read_file(geojson_path)
     return None
-
 
 # Panggil file peta GeoJSON
 gdf_lampung = load_geojson()
@@ -180,7 +179,7 @@ else:
     years = sorted(list(set(ds.time.dt.year.values)))
     st.sidebar.subheader("5. Rentang Tahun Analisis")
     tahun_mulai, tahun_selesai = st.sidebar.select_slider(
-        "Gabungkan Periode Tahun:", options=years, value=(2021, 2030)
+        "Gabungkan Periode Tahun:", options=years, value=(2025, 2050)
     )
 
     # --- FILTER SPASIAL DAN WAKTU AWAL ---
@@ -190,13 +189,6 @@ else:
         lon=geo_box["lon_slice"],
         time=slice(f"{tahun_mulai}-01-01", f"{tahun_selesai}-12-31"),
     )
-
-    # --- SIDEBAR DESAIN VISUAL (SMOOTHING OPTION) ---
-    st.sidebar.subheader("🎨 Desain Visual")
-    smooth_option = st.sidebar.checkbox(
-        "Aktifkan Smoothing Peta (Interpolasi)", value=True
-    )
-    shading_method = "gouraud" if smooth_option else "flat"
 
     if gdf_lampung is None:
         st.sidebar.error(
@@ -209,7 +201,7 @@ else:
     )
 
     # =========================================================================
-    # TAB 1: VISUALISASI 12 BULAN (KLIMATOLOGI PERIODE PILIHAN)
+    # TAB 1: VISUALISASI 12 BULAN (KLIMATOLOGI KONTUR TERISI)
     # =========================================================================
     with tab_bulanan:
         st.subheader(
@@ -219,51 +211,65 @@ else:
             f"Menampilkan peta rata-rata spasial bulanan sepanjang periode {tahun_mulai}-{tahun_selesai} untuk variabel {dict_var[var_pilihan]}."
         )
 
-        # Logika Inti: Menghitung rata-rata klimatologi bulanan berdasarkan rentang tahun terpilih
+        # Menghitung rata-rata klimatologi bulanan berdasarkan rentang tahun terpilih
         climatology_monthly = ds_area[var_pilihan].groupby("time.month").mean(dim="time")
 
         # Membuat Grid Plot 3x4 untuk 12 Bulan
         fig, axes = plt.subplots(3, 4, figsize=(15, 12), sharex=True, sharey=True)
         month_names = [
-            "Januari", "Februari", "Maret", "April", "Mei", "Juni",
-            "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+            "JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI",
+            "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER"
         ]
 
-        # Menyetel batas minimal & maksimal visualisasi warna agar seragam di semua bulan
-        vmin = float(climatology_monthly.min())
-        vmax = float(climatology_monthly.max())
+        # Konfigurasi tingkatan kelas (levels) berdasarkan contoh gambar BMKG Anda
+        if var_pilihan == "pr":
+            clevels = [0, 20, 50, 100, 150, 200, 300, 400, 500]
+        else:
+            # Otomatis menyesuaikan jika variabelnya bukan total curah hujan bulanan
+            v_min, v_max = float(climatology_monthly.min()), float(climatology_monthly.max())
+            clevels = np.linspace(v_min, v_max, 9)
 
         for i, ax in enumerate(axes.flat):
             data_month = climatology_monthly.sel(month=i + 1)
 
-            # 1. Gambar peta gradasi iklim
-            p = ax.pcolormesh(
+            # Gambar kontur terisi (contourf) terinterpolasi halus dengan pembagian kelas yang tegas
+            p = ax.contourf(
                 data_month.lon,
                 data_month.lat,
                 data_month.values,
-                shading=shading_method,
-                cmap=cmap_kustom,  # Menggunakan colormap kustom ch1-ch8 Anda
-                vmin=vmin,
-                vmax=vmax,
+                levels=clevels,
+                cmap=cmap_kustom,
+                extend="max" if var_pilihan == "pr" else "neither"
             )
 
-            # 2. Gambar garis batas administrasi kabupaten (SHP/GeoJSON Overlay)
+            # Overlay garis batas administrasi kabupaten dari GeoJSON Anda
             if gdf_lampung is not None:
                 gdf_lampung.plot(
                     ax=ax,
                     facecolor="none",
                     edgecolor="black",
                     linewidth=0.6,
-                    alpha=0.7,
+                    alpha=0.8,
                 )
 
-            ax.set_title(month_names[i], fontsize=12, fontweight="bold")
-            ax.grid(True, linestyle="--", alpha=0.3)
+            ax.set_title(month_names[i], fontsize=11, fontweight="bold")
+            ax.grid(True, linestyle="--", alpha=0.5)
+            
+            # Format penulisan koordinat pada sumbu X dan Y agar rapi (°S dan °E)
+            ax.set_yticks([-6, -5.5, -5, -4.5, -4])
+            ax.set_yticklabels(["6°S", "5.5°S", "5°S", "4.5°S", "4°S"])
+            ax.set_xticks([104, 105, 106])
+            ax.set_xticklabels(["104°E", "105°E", "106°E"])
 
-        # Membuat Colorbar Terpusat di Sebelah Kanan Grid
-        fig.subplots_adjust(right=0.88, hspace=0.3, wspace=0.15)
-        cbar_ax = fig.add_axes([0.91, 0.15, 0.02, 0.7])
-        fig.colorbar(p, cax=cbar_ax, label=ds[var_pilihan].attrs.get("units", ""))
+        # Menambahkan Colorbar Horizontal Terpusat di Bagian Bawah Gambar
+        fig.subplots_adjust(bottom=0.18, hspace=0.3, wspace=0.2)
+        cbar_ax = fig.add_axes([0.15, 0.08, 0.7, 0.02])
+        fig.colorbar(
+            p, 
+            cax=cbar_ax, 
+            orientation="horizontal", 
+            label=f"{ds[var_pilihan].attrs.get('units', 'mm/bulan')}"
+        )
 
         st.pyplot(fig)
 
@@ -275,67 +281,69 @@ else:
             f"🍂 Analisis Rata-Rata Musiman Periode {tahun_mulai} - {tahun_selesai}"
         )
         st.caption(
-            "Pembagian musim meteorologi: DJF (Des-Jan-Feb), MAM (Mar-Apr-Mei), JJA (Jun-Jul-Agt), SON (Sep-Okt-Nov)."
+            "Pembagian musim standard meteorologi: DJF (Des-Jan-Feb), MAM (Mar-Apr-Mei), JJA (Jun-Jul-Agt), SON (Sep-Okt-Nov)."
         )
 
-        # Logika Inti: Menghitung rata-rata musiman sepanjang rentang tahun terpilih
+        # Menghitung rata-rata musiman sepanjang rentang tahun terpilih
         climatology_seasonal = ds_area[var_pilihan].groupby("time.season").mean(dim="time")
 
         seasons_order = ["DJF", "MAM", "JJA", "SON"]
         season_titles = {
-            "DJF": "Musim Barat / Hujan (DJF)",
-            "MAM": "Musim Peralihan I (MAM)",
-            "JJA": "Musim Timur / Kemarau (JJA)",
-            "SON": "Musim Peralihan II (SON)",
+            "DJF": "MUSIM BARAT / HUJAN (DJF)",
+            "MAM": "MUSIM PERALIHAN I (MAM)",
+            "JJA": "MUSIM TIMUR / KEMARAU (JJA)",
+            "SON": "MUSIM PERALIHAN II (SON)",
         }
 
-        col_left, col_right = st.columns([3, 1])
+        if var_pilihan == "pr":
+            clevels_s = [0, 20, 50, 100, 150, 200, 300, 400, 500]
+        else:
+            clevels_s = np.linspace(float(climatology_seasonal.min()), float(climatology_seasonal.max()), 9)
 
-        with col_left:
-            fig2, axes2 = plt.subplots(2, 2, figsize=(12, 10), sharex=True, sharey=True)
-            vmin_s = float(climatology_seasonal.min())
-            vmax_s = float(climatology_seasonal.max())
+        fig2, axes2 = plt.subplots(2, 2, figsize=(11, 10), sharex=True, sharey=True)
 
-            for i, ax in enumerate(axes2.flat):
-                sea = seasons_order[i]
-                data_season = climatology_seasonal.sel(season=sea)
+        for i, ax in enumerate(axes2.flat):
+            sea = seasons_order[i]
+            data_season = climatology_seasonal.sel(season=sea)
 
-                # 1. Gambar peta gradasi iklim musiman
-                p2 = ax.pcolormesh(
-                    data_season.lon,
-                    data_season.lat,
-                    data_season.values,
-                    shading=shading_method,
-                    cmap=cmap_kustom,  # Menggunakan colormap kustom ch1-ch8 Anda
-                    vmin=vmin_s,
-                    vmax=vmax_s,
+            # Gambar kontur terisi musiman
+            p2 = ax.contourf(
+                data_season.lon,
+                data_season.lat,
+                data_season.values,
+                levels=clevels_s,
+                cmap=cmap_kustom,
+                extend="max" if var_pilihan == "pr" else "neither"
+            )
+
+            # Overlay garis batas administrasi kabupaten dari GeoJSON Anda
+            if gdf_lampung is not None:
+                gdf_lampung.plot(
+                    ax=ax,
+                    facecolor="none",
+                    edgecolor="black",
+                    linewidth=0.6,
+                    alpha=0.8,
                 )
 
-                # 2. Gambar garis batas administrasi kabupaten (SHP/GeoJSON Overlay)
-                if gdf_lampung is not None:
-                    gdf_lampung.plot(
-                        ax=ax,
-                        facecolor="none",
-                        edgecolor="black",
-                        linewidth=0.6,
-                        alpha=0.7,
-                    )
+            ax.set_title(season_titles[sea], fontsize=11, fontweight="bold")
+            ax.grid(True, linestyle="--", alpha=0.5)
+            
+            ax.set_yticks([-6, -5.5, -5, -4.5, -4])
+            ax.set_yticklabels(["6°S", "5.5°S", "5°S", "4.5°S", "4°S"])
+            ax.set_xticks([104, 105, 106])
+            ax.set_xticklabels(["104°E", "105°E", "106°E"])
 
-                ax.set_title(season_titles[sea], fontsize=12, fontweight="bold")
-                ax.grid(True, linestyle="--", alpha=0.3)
+        # Menambahkan Colorbar Horizontal Terpusat di Bagian Bawah Gambar Musiman
+        fig2.subplots_adjust(bottom=0.15, hspace=0.2, wspace=0.2)
+        cbar_ax2 = fig2.add_axes([0.15, 0.06, 0.7, 0.02])
+        fig2.colorbar(
+            p2, 
+            cax=cbar_ax2, 
+            orientation="horizontal", 
+            label=f"{ds[var_pilihan].attrs.get('units', 'mm/bulan')}"
+        )
 
-            fig2.subplots_adjust(right=0.88, hspace=0.2, wspace=0.15)
-            cbar_ax2 = fig2.add_axes([0.92, 0.15, 0.02, 0.7])
-            fig2.colorbar(
-                p2, cax=cbar_ax2, label=ds[var_pilihan].attrs.get("units", "")
-            )
-
-            st.pyplot(fig2)
-
-        with col_right:
-            st.markdown("#### 📝 Ringkasan Analisis")
-            st.info(
-                f"Analisis komparasi spasial per-musim ini membantu memvisualisasikan daerah mana saja di **{wilayah_pilihan}** yang rentan mengalami kekeringan ekstrem pada musim JJA atau curah hujan sangat tinggi pada musim DJF di masa depan."
-            )
+        st.pyplot(fig2)
 
     ds.close()

@@ -177,7 +177,11 @@ else:
     # TAB 1: VISUALISASI 12 BULAN (JUDUL MASUK KANVAS DAN BISA DI-DOWNLOAD)
     # =========================================================================
     with tab_bulanan:
-        st.subheader(f"📊 Klimatologi Rata-Rata Bulanan Periode {tahun_mulai} - {tahun_selesai} /n Skenario {skenario} {model_options}")
+        # Perbaikan: Menggunakan \n untuk baris baru, dan menggunakan model_pilihan
+        st.subheader(
+            f"📊 Klimatologi Rata-Rata Bulanan Periode {tahun_mulai} - {tahun_selesai} \n "
+            f"Skenario {skenario} - {model_pilihan}"
+        )
         climatology_monthly = ds_area[var_pilihan].groupby("time.month").mean(dim="time")
 
         fig, axes = plt.subplots(3, 4, figsize=(16, 14), sharex=True, sharey=True)
@@ -185,7 +189,8 @@ else:
 
         # Judul Masuk ke Canvas Matplotlib agar Terbawa Saat Di-download
         fig.suptitle(
-            f"Klimatologi Rata-Rata Bulanan Periode {tahun_mulai} - {tahun_selesai}",
+            f"Klimatologi Rata-Rata Bulanan Periode {tahun_mulai} - {tahun_selesai} \n"
+            f"Skenario {skenario} - {model_pilihan}",
             fontsize=16, 
             fontweight="bold", 
             y=0.95

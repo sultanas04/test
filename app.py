@@ -273,7 +273,7 @@ else:
         fig2.suptitle(
             f"Analisis Rata-Rata Musiman Periode {tahun_mulai} - {tahun_selesai}\n"
             f"Skenario {skenario} - {model_pilihan}",
-            fontsize=15, 
+            fontsize=12, 
             fontweight="bold", 
             y=0.94
         )

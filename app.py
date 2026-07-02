@@ -23,9 +23,9 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("⛈️ Dashboard Proyeksi Indeks Curah Hujan Ekstrem - Provinsi Lampung")
+st.title("⛈️ Dashboard Proyeksi Iklim - Provinsi Lampung")
 st.markdown(
-    "Aplikasi interaktif analisis klimatologi bulanan dan musiman berbasis data CMIP6 BMKG."
+    "Aplikasi interaktif proyeksi klimatologi bulanan dan musiman berbasis data CMIP6."
 )
 st.write("---")
 
@@ -177,7 +177,7 @@ else:
     # TAB 1: VISUALISASI 12 BULAN (JUDUL MASUK KANVAS DAN BISA DI-DOWNLOAD)
     # =========================================================================
     with tab_bulanan:
-        st.subheader(f"📊 Klimatologi Rata-Rata Bulanan Periode {tahun_mulai} - {tahun_selesai}")
+        st.subheader(f"📊 Klimatologi Rata-Rata Bulanan Periode {tahun_mulai} - {tahun_selesai} /n Skenario {skenario} {model_options}")
         climatology_monthly = ds_area[var_pilihan].groupby("time.month").mean(dim="time")
 
         fig, axes = plt.subplots(3, 4, figsize=(16, 14), sharex=True, sharey=True)

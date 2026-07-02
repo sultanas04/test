@@ -248,7 +248,7 @@ else:
         st.download_button(
             label="💾 Download Peta Bulanan (PNG)",
             data=img_buffer_monthly,
-            file_name=f"Proyeksi_Bulanan_{skenario}_{tahun_mulai}_{tahun_selesai}.png",
+            file_name=f"Proyeksi_Bulanan_{skenario}_{tahun_mulai}_{tahun_selesai}_{skenario} - {model_pilihan}.png",
             mime="image/png"
         )
 
@@ -256,20 +256,23 @@ else:
     # TAB 2: VISUALISASI MUSIMAN (JUDUL MASUK KANVAS DAN BISA DI-DOWNLOAD)
     # =========================================================================
     with tab_musiman:
-        st.subheader(f"🍂 Analisis Rata-Rata Musiman Periode {tahun_mulai} - {tahun_selesai}")
+        st.subheader(f"🍂 Analisis Rata-Rata Musiman Periode {tahun_mulai} - {tahun_selesai} \n "
+            f"Skenario {skenario} - {model_pilihan}"
+        )
         climatology_seasonal = ds_area[var_pilihan].groupby("time.season").mean(dim="time")
 
         seasons_order = ["DJF", "MAM", "JJA", "SON"]
         season_titles = {
-            "DJF": "MUSIM BARAT / HUJAN (DJF)", "MAM": "MUSIM PERALIHAN I (MAM)", 
-            "JJA": "MUSIM TIMUR / KEMARAU (JJA)", "SON": "MUSIM PERALIHAN II (SON)"
+            "DJF": "MUSIM HUJAN (DJF)", "MAM": "PERIODE PERALIHAN I (MAM)", 
+            "JJA": "MUSIM KEMARAU (JJA)", "SON": "PERIODE PERALIHAN II (SON)"
         }
 
         fig2, axes2 = plt.subplots(2, 2, figsize=(12, 12), sharex=True, sharey=True)
 
         # Judul Masuk ke Canvas Matplotlib agar Terbawa Saat Di-download
         fig2.suptitle(
-            f"Analisis Rata-Rata Musiman Periode {tahun_mulai} - {tahun_selesai}",
+            f"Analisis Rata-Rata Musiman Periode {tahun_mulai} - {tahun_selesai}\n"
+            f"Skenario {skenario} - {model_pilihan}",
             fontsize=15, 
             fontweight="bold", 
             y=0.94
@@ -328,7 +331,7 @@ else:
         st.download_button(
             label="💾 Download Peta Musiman (PNG)",
             data=img_buffer_seasonal,
-            file_name=f"Proyeksi_Musiman_{skenario}_{tahun_mulai}_{tahun_selesai}.png",
+            file_name=f"Proyeksi_Musiman_{skenario}_{tahun_mulai}_{tahun_selesai}_{skenario} - {model_pilihan}.png",
             mime="image/png"
         )
 

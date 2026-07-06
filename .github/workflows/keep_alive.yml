@@ -1,0 +1,14 @@
+name: Keep Streamlit Dashboard Awake
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  ping_job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Streamlit URL with Real Browser User-Agent
+        run: |
+          curl -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -I "https://qwertyuiop1234.streamlit.app/"
